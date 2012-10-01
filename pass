@@ -1,0 +1,106 @@
+#!/usr/bin/env perl
+
+use v5.16;
+use strict;
+use warnings;
+use Carp;
+use FindBin qw($Bin);
+use lib "$Bin/lib";
+use Redis;
+use Redis::Handle;
+use YAML qw(Load Dump);
+use feature qw(say);
+use Data::UUID;
+
+sub pipe_to_child ($) {
+    no strict 'refs';
+    my $parent = shift;
+    pipe my $child, $parent or die;
+    my $pid = fork;
+    die "fork() failed: $!" unless defined $pid;
+    if ($pid) {
+        close $child;
+    }
+    else {
+        close $parent;
+        open(STDIN, "<&=" . fileno($child)) or die "$!";
+    }
+    $pid;
+}
+
+my %pid_of;
+
+$SIG{CHLD} = sub {
+    local ($!, $?);
+    my $pid = waitpid -1, 0;
+    return if $pid == -1;
+    my %children = reverse %pid_of;
+    my $id = $children{$pid};
+    return unless $id;
+    tie local *APPERR, q(Redis::Handle), qq($id:err);
+    print APPERR "${id}KILL by signal $?";
+    close APPERR;
+    delete $pid_of{$id};
+};
+
+my $problemClass;
+my %dispatch = (
+    solve => sub {
+        my %op = %{+shift};
+        my ($id,$instance,$classKey) = @op{qw(id instance classKey)};
+
+        if (my $pid = pipe_to_child(q(CHILD))) {
+            $pid_of{$id} = $pid;
+            print CHILD "$id\n";
+            print CHILD "$classKey\n";
+            print CHILD "$instance\n";
+            close CHILD;
+        }
+        else {
+            my $id = <STDIN>;
+            chomp $id;
+
+            my $classKey = <STDIN>;
+            chomp $classKey;
+
+            my $instance;
+            do { local $/; $instance = <STDIN>; };
+            chomp $instance;
+
+            my $class = Redis->new->get($classKey);
+            use File::Temp qw(tempfile);
+            my ($fh,$filename) = tempfile;
+            print $fh "$class$instance";
+            close $fh;
+
+            tie local *STDOUT, q(Redis::Handle), "$id:result"
+                or croak "Couldn't tie STDOUT to [$id]: $!";
+            tie local *STDERR, q(Redis::Handle), "$id:err"
+                or croak "Couldn't tie STDERR to [$id]: $!";
+
+            my $res = `clingo 100 $filename`;
+            my @answers = ($res =~ m/Answer: \d+\n(.+)\n/g);
+            say Dump(\@answers);
+            exit(0);
+        }
+    },
+);
+
+# MAIN
+open my $problemClassFile, "<", $ARGV[0];
+do { local $/; $problemClass = <$problemClassFile>; };
+my $classKey = Data::UUID->new->create_str;
+Redis->new->set($classKey => $problemClass);
+
+while (1) {
+    tie local *QUEUE, q(Redis::Handle), q(command) or die $!;
+    while (<QUEUE>) {
+        my $op = Load($_);
+        say "received job:\n",$op->{instance};
+        $op->{classKey} = $classKey;
+        Redis->new->rpush(q(jobkeys) , $op->{id});
+        $dispatch{$op->{command}}->($op);
+    }
+    close QUEUE;
+}
+close QUEUE;
