@@ -8,7 +8,7 @@ use FindBin qw($Bin);
 use lib "$Bin/lib";
 use Redis;
 use Redis::Handle;
-use YAML qw(Load Dump);
+use YAML qw(Load Dump LoadFile);
 use feature qw(say);
 use Data::UUID;
 
@@ -87,13 +87,23 @@ my %dispatch = (
 );
 
 # MAIN
+my $config = LoadFile("config");
+$config->{host} //= "localhost";
+$config->{port} //= 6379;
+$config->{timeout} //= 100;
+
 open my $problemClassFile, "<", $ARGV[0];
 do { local $/; $problemClass = <$problemClassFile>; };
 my $classKey = Data::UUID->new->create_str;
 Redis->new->set($classKey => $problemClass);
 
 while (1) {
-    tie local *QUEUE, q(Redis::Handle), q(command) or die $!;
+    tie local *QUEUE, q(Redis::Handle), q(command),
+        timeout => $config->{timeout},
+        host    => $config->{host},
+        port    => $config->{port}
+    or die $!;
+
     while (<QUEUE>) {
         my $op = Load($_);
         say "received job:\n",$op->{instance};
