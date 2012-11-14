@@ -6,6 +6,8 @@ Perl Answer Set Solver. (c) 2012, Gatlin Johnson <rokenrol@gmail.com>
 0. usage
 ---
 
+    $> cp config.sample config
+    $> vim config
     $> pass classdefinition.cl
 
 1. What?
