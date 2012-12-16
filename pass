@@ -3,11 +3,9 @@
 use v5.16;
 use strict;
 use warnings;
-use EV;
 use AnyEvent;
 use AnyEvent::Redis;
 use YAML qw(Load Dump LoadFile);
-use Data::UUID;
 use Data::Dump qw(pp);
 
 my %pid_of; my %dispatch;
@@ -62,7 +60,7 @@ sub handle {
 }
 
 while (1) {
-    my $cv = $redis->brpop('command',1000);
+    my $cv = $redis->brpop('command',0);
     my $res; eval {
         $res = $cv->recv;
         handle($res);
