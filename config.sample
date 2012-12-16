@@ -1,4 +1,4 @@
 ---
-port: 6379
-host: "localhost"
-timeout: 100
+port: ####
+host: "####"
+timeout: ###
